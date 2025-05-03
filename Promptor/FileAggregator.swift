@@ -157,9 +157,6 @@ class FileAggregator: ObservableObject {
     
     // Recursively create a file tree
     private func createFileTree(at url: URL, relativeTo rootURL: URL, fileManager fm: FileManager) -> FileNode? {
-        // Apply global import filter rules first.
-        guard settings.shouldImport(url) else { return nil }
-        
         do {
             // Get required attributes
             let resourceKeys: [URLResourceKey] = [.isDirectoryKey, .nameKey, .fileSizeKey]
@@ -392,69 +389,115 @@ class FileAggregator: ObservableObject {
         for node in sortedSelectedNodes {
             // Reload content by calling loadFileContent directly here
             // Content cache was cleared above, so this will re-read if necessary
-            let content = loadFileContent(node.url)
+            let content = loadFileContent(node.url) 
             // Update node's content cache (optional, but can avoid re-reading immediately)
             // _ = findAndUpdateNode(node.id, in: &rootNode) { n in var copy = n; copy.content = content; return copy }
 
+            // --- Stage 4: Skip nil content --- START
+            guard let fileContent = content else {
+                 print("Skipping binary/unreadable file in prompt: \(node.relativePath)")
+                 continue // Skip this file if content is nil (e.g., binary)
+            }
+            // --- Stage 4: Skip nil content --- END
+
             let header = "```\(node.relativePath)\n"
             let footer = "\n```"
-            chunks.append(header + (content ?? "Error: Could not read file.") + footer)
+            chunks.append(header + fileContent + footer) // Use unwrapped fileContent
         }
         finalPrompt = currentTemplate.render(with: chunks.joined(separator: "\n\n"))
-        print("Prompt assembled with \(sortedSelectedNodes.count) files.") // Add logging
+        print("Prompt assembled with \(chunks.count) text files (out of \(sortedSelectedNodes.count) selected).") // Updated log
     }
     
-    // Helper to safely load file content
+    // Get content for a specific node
     private func loadFileContent(_ url: URL) -> String? {
-        // First make sure we can access the file with security scope
-        if !url.startAccessingSecurityScopedResource() {
-            print("Cannot access file with security scope: \(url.path)")
-            
-            // Try another approach - access through the root folder
-            if let rootURL = rootFolderURL, rootURL.startAccessingSecurityScopedResource() {
-                defer { rootURL.stopAccessingSecurityScopedResource() }
+        print("Attempting to load content for: \(url.path)") // Add logging
+
+        // 1. Security-scope dance (adapted slightly from original)
+        let needsScope = url.path.contains(rootFolderURL?.path ?? "") && UserDefaults.standard.data(forKey: "LastFolderBookmark") != nil
+        var accessGranted = true
+        if needsScope {
+            accessGranted = url.startAccessingSecurityScopedResource()
+            if accessGranted {
+                 defer { url.stopAccessingSecurityScopedResource() }
             } else {
-                // Try to resolve from bookmark as last resort
+                // Try resolving bookmark as fallback if direct access fails
+                print("Could not start security scope directly, trying bookmark for \(url.path)")
                 if let bookmarkData = UserDefaults.standard.data(forKey: "LastFolderBookmark") {
                     do {
                         var isStale = false
                         let resolvedURL = try URL(resolvingBookmarkData: bookmarkData, 
-                                                 options: .withSecurityScope, 
-                                                 relativeTo: nil, 
-                                                 bookmarkDataIsStale: &isStale)
-                        
-                        if resolvedURL.startAccessingSecurityScopedResource() {
-                            defer { resolvedURL.stopAccessingSecurityScopedResource() }
+                                                  options: .withSecurityScope, 
+                                                  relativeTo: nil, 
+                                                  bookmarkDataIsStale: &isStale)
+                        if !isStale && resolvedURL.startAccessingSecurityScopedResource() {
+                            print("Access granted via bookmark resolution.")
+                            accessGranted = true
+                            defer { resolvedURL.stopAccessingSecurityScopedResource() } // Important: stop access on the *resolved* URL
+                        } else {
+                             print("Bookmark resolved but access still denied or stale.")
+                             accessGranted = false
                         }
                     } catch {
-                        print("Failed to resolve bookmark: \(error)")
-                        
-                        // Post notification about the error
-                        NotificationCenter.default.post(
-                            name: NSNotification.Name("FileAccessError"),
-                            object: "Failed to access the selected folder. You may need to re-select it."
-                        )
-                        
-                        return "Error: Permission issue. Please re-select the folder."
+                         print("Failed to resolve bookmark: \(error)")
+                         accessGranted = false
                     }
+                } else {
+                     accessGranted = false // No bookmark data
                 }
             }
         }
-        defer { url.stopAccessingSecurityScopedResource() }
         
-        // Now try to read the file
-        do {
-            return try String(contentsOf: url, encoding: .utf8)
-        } catch {
-            print("Error reading file \(url.path): \(error)")
-            
+        guard accessGranted else {
+            print("Permission denied for \(url.path)")
             // Post notification about the error
             NotificationCenter.default.post(
                 name: NSNotification.Name("FileAccessError"),
-                object: "Failed to read file \(url.lastPathComponent): \(error.localizedDescription)"
+                object: "Permission denied for \(url.lastPathComponent). You may need to re-select the folder."
             )
-            
-            return "Error reading file. Please check permissions or try selecting the folder again."
+            return "Error: Permission denied for \(url.lastPathComponent)."
+        }
+
+        // 2. Size check (using settings)
+        if let sz = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+           sz > settings.maxFileSize {
+            print("File too large: \(url.lastPathComponent) (\(sz) bytes > \(settings.maxFileSize))")
+            return "Error: File size (\(sz / 1024) KB) exceeds limit (\(settings.maxFileSize / 1024) KB)."
+        }
+
+        // 3. Fast path – try UTF-8 text
+        do {
+            let txt = try String(contentsOf: url, encoding: .utf8)
+            print("Loaded as UTF-8: \(url.lastPathComponent)")
+            return txt
+        } catch {
+            // Continue to next encoding attempt
+             print("UTF-8 decoding failed for \(url.lastPathComponent), trying Latin1...")
+        }
+        
+        // 4. Fallback – try ISO-8859-1 (latin-1) for arbitrary bytes -> chars
+        do {
+            let data = try Data(contentsOf: url)
+            if let latin = String(data: data, encoding: .isoLatin1) {
+                print("Loaded as ISO Latin 1: \(url.lastPathComponent)")
+                return latin
+            }
+        } catch {
+             print("Data read failed for \(url.lastPathComponent), trying Base64...")
+            // Error reading data, proceed to Base64 attempt if possible
+        }
+
+        // 5. Last resort – Base-64 encode binary so it is still printable
+        do {
+            let data = try Data(contentsOf: url)
+            print("Encoding as Base64: \(url.lastPathComponent)")
+            return "@@BASE64@@\n" + data.base64EncodedString()
+        } catch {
+             print("Base64 encoding failed (cannot read data): \(url.path): \(error)")
+             NotificationCenter.default.post(
+                 name: NSNotification.Name("FileAccessError"),
+                 object: "Failed to read file \(url.lastPathComponent) for Base64 encoding: \(error.localizedDescription)"
+             )
+             return "Error: Could not read file \(url.lastPathComponent)."
         }
     }
 

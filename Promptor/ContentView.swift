@@ -64,8 +64,8 @@ struct ContentView: View {
             PromptToolbar(showTemplatePicker: $showTemplatePicker)
         }
         .fileImporter(isPresented: $showingFileImporter,
-                      allowedContentTypes: [UTType.folder],
-                      allowsMultipleSelection: false) { res in
+                      allowedContentTypes: [.folder, .item],
+                      allowsMultipleSelection: true) { res in
             if case let .success(urls) = res, let first = urls.first {
                 pickedFolderURL = first
                 showImportOptions = true
