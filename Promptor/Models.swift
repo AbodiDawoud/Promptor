@@ -9,10 +9,6 @@ struct AppSettings: Codable, Equatable {
     var maxFileSize       : Int = 500 * 1024         // Bytes
 
     // MARK: - Hard rules (never exposed in UI)
-    private let allowedContent: [UTType] = [
-        .plainText, .swiftSource,
-        .sourceCode, .json, .xml
-    ]
 
     /// Central gatekeeper used by the importer.
     func shouldImport(_ url: URL) -> Bool {
@@ -34,13 +30,6 @@ struct AppSettings: Codable, Equatable {
             return false
         }
 
-        // Make sure it's text-like (files only)
-        if !url.hasDirectoryPath {
-            if let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType,
-               !allowedContent.contains(where: { type.conforms(to: $0) }) {
-                return false
-            }
-        }
         return true
     }
 }
