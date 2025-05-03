@@ -20,7 +20,7 @@ struct PromptToolbar: ToolbarContent {
             }
             .help("Expand or Collapse All Folders")
 
-            Button { vm.refreshAll() } label: {
+            Button { vm.reloadContents() } label: {
                 Label("Refresh Files", systemImage: "arrow.clockwise")
             }
             .help("Force refresh file content")

@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 // Hierarchical node structure that can represent both files and folders
 struct FileNode: Identifiable, Hashable {
-    let id = UUID()
+    let id: String
     let url: URL
     var relativePath: String
     var name: String  // Just the filename or directory name
@@ -41,16 +41,33 @@ class FileAggregator: ObservableObject {
     @Published var rootNode: FileNode?  // Root of our file tree
     @Published var fileNodes: [FileNode] = []  // Flat list for backward compatibility
     @Published var selectedNodes: Set<FileNode> = []
-    @Published var expandedNodes: Set<UUID> = []  // Track expanded folders
+    @Published var expandedNodes: Set<String> = []  // Track expanded folders by String ID
     @Published var finalPrompt: String = ""
     @Published var rootFolderURL: URL?
     @Published var settings = AppSettings()
     @Published var showRemoveIcons: Bool = true
     @Published var currentTemplate: Template = Template(name: "Default", format: "{{files}}")
     
+    // --- NEW: Folder Watcher Properties ---
+    private var watcher: FolderWatcher?
+    private var cancellables = Set<AnyCancellable>()
+    private let treeDidChange = PassthroughSubject<Void, Never>()
+    // --- END NEW ---
+
     init() {
         // Try to restore previously accessed folder on launch
         restoreLastFolderAccess()
+        
+        // --- NEW: Setup Debouncer for Folder Watcher ---
+        // Debounce rapid bursts of file system events
+        treeDidChange
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { [weak self] in
+                print("FSEvent triggered rescanTree()") // Add logging
+                self?.rescanTree()
+            }
+            .store(in: &cancellables)
+        // --- END NEW ---
     }
     
     // Restore access to previously selected folder if available
@@ -80,9 +97,14 @@ class FileAggregator: ObservableObject {
     
     func importFolder(_ root: URL) {
         self.rootFolderURL = root
-        self.fileNodes = []
-        self.selectedNodes = []
-        self.expandedNodes = []
+        
+        // --- Preserve state before clearing ---
+        let previousSelectedIDs = Set(selectedNodes.map { $0.id })
+        let previousExpandedIDs = expandedNodes // Keep existing expanded set
+        // --- End Preserve ---
+
+        self.fileNodes = [] // Still clear flat list if needed
+        // Don't clear selectedNodes/expandedNodes here, restore them later
         
         let fm = FileManager.default
         
@@ -105,8 +127,21 @@ class FileAggregator: ObservableObject {
             // Create the hierarchical structure
             self.rootNode = createFileTree(at: root, relativeTo: root, fileManager: fm)
             
-            // Also create a flat list for backward compatibility
-            self.fileNodes = flattenFileTree(self.rootNode)
+            // Restore selection and expansion state
+            restoreSelectionAndExpansion(selectedIDs: previousSelectedIDs, expandedIDs: previousExpandedIDs)
+
+            // Recompute folder selections based on restored state
+            recomputeFolderSelections()
+
+            // Assemble initial prompt
+            assemblePrompt() // Assemble after restoring state
+            
+            // Also create a flat list for backward compatibility if needed
+            // self.fileNodes = flattenFileTree(self.rootNode) // Can be done if flat list is still used
+
+            // --- NEW: Start watcher after successful import ---
+            startWatching(root)
+            // --- END NEW ---
         } else {
             print("Error: Cannot access security-scoped resource.")
             hasAccess = false
@@ -140,6 +175,10 @@ class FileAggregator: ObservableObject {
             // Is this a directory or file?
             let isDirectory = resourceValues.isDirectory ?? false
             
+            // --- NEW: Use url.path for stable ID ---
+            let nodeID = url.path
+            // --- END NEW ---
+            
             if isDirectory {
                 // For directories, recursively process contents
                 var children: [FileNode] = []
@@ -162,6 +201,7 @@ class FileAggregator: ObservableObject {
                 }
                 
                 return FileNode(
+                    id: nodeID, // NEW ID
                     url: url,
                     relativePath: relativePath.isEmpty ? name : relativePath,
                     name: name,
@@ -169,11 +209,12 @@ class FileAggregator: ObservableObject {
                     children: children,
                     content: nil,
                     isSelected: false,
-                    isExpanded: false
+                    isExpanded: false // Default expansion state
                 )
             } else {
                 // Create a file node (content loaded on demand)
                 return FileNode(
+                    id: nodeID, // NEW ID
                     url: url,
                     relativePath: relativePath.isEmpty ? name : relativePath,
                     name: name,
@@ -245,7 +286,7 @@ class FileAggregator: ObservableObject {
     }
 
     // Toggle folder expansion
-    func toggleExpansion(_ nodeID: UUID) {
+    func toggleExpansion(_ nodeID: String) {
         if expandedNodes.contains(nodeID) {
             expandedNodes.remove(nodeID)
         } else {
@@ -266,7 +307,7 @@ class FileAggregator: ObservableObject {
     
     // Helper to find and update a node in the tree
     private func findAndUpdateNode(
-        _ id: UUID,
+        _ id: String,
         in node: inout FileNode?,
         update: (FileNode) -> FileNode
     ) -> FileNode? {
@@ -332,19 +373,35 @@ class FileAggregator: ObservableObject {
     // Assemble the final prompt using only selected files
     func assemblePrompt() {
         var chunks: [String] = []
-        let selectedFiles = selectedNodes.filter { !$0.isDirectory }
-        let sortedSelectedNodes = selectedFiles.sorted { $0.relativePath < $1.relativePath }
+        // Make sure selectedNodes is up-to-date before assembling
+        let currentSelectedFiles = collectAllNodes(rootNode).filter { $0.isSelected && !$0.isDirectory }
+
+        let sortedSelectedNodes = currentSelectedFiles.sorted { $0.relativePath < $1.relativePath }
+
+        // --- Clear cache for selected files before assembling ---
+        // This ensures we re-read content during assembly if needed
         for node in sortedSelectedNodes {
-            // Load content if needed
-            var content = node.content
-            if content == nil {
-                content = loadFileContent(node.url)
-            }
+             _ = findAndUpdateNode(node.id, in: &rootNode) { n in
+                 var copy = n
+                 copy.content = nil // Clear cache
+                 return copy
+             }
+        }
+        // --- End Clear Cache ---
+
+        for node in sortedSelectedNodes {
+            // Reload content by calling loadFileContent directly here
+            // Content cache was cleared above, so this will re-read if necessary
+            let content = loadFileContent(node.url)
+            // Update node's content cache (optional, but can avoid re-reading immediately)
+            // _ = findAndUpdateNode(node.id, in: &rootNode) { n in var copy = n; copy.content = content; return copy }
+
             let header = "```\(node.relativePath)\n"
             let footer = "\n```"
             chunks.append(header + (content ?? "Error: Could not read file.") + footer)
         }
         finalPrompt = currentTemplate.render(with: chunks.joined(separator: "\n\n"))
+        print("Prompt assembled with \(sortedSelectedNodes.count) files.") // Add logging
     }
     
     // Helper to safely load file content
@@ -426,10 +483,65 @@ class FileAggregator: ObservableObject {
         }
     }
 
-    func refreshAll() {
+    // --- NEW: Refresh Methods ---
+    /// Re-scans the folder hierarchy (slow but thorough), preserving state.
+    func rescanTree() {
+        print("Starting rescanTree...") // Add logging
         guard let root = rootFolderURL else { return }
+        // Call importFolder which now preserves state
         importFolder(root)
+        print("Finished rescanTree.") // Add logging
     }
+
+    /// Only re-loads content of files already in the tree (fast).
+    func reloadContents() {
+        print("Starting reloadContents...") // Add logging
+        // Collect all nodes currently in the tree
+        let allNodesInTree = collectAllNodes(rootNode)
+
+        // Filter for files (not directories)
+        let filesToRefresh = allNodesInTree.filter { !$0.isDirectory }
+
+        var cacheClearedCount = 0
+        // Iterate through the files and clear their cached content
+        for fileNode in filesToRefresh {
+            // Use findAndUpdateNode to clear the content cache in the main tree structure
+             let updatedNode = findAndUpdateNode(fileNode.id, in: &rootNode) { node in
+                var copy = node
+                if copy.content != nil { // Only clear if it was actually cached
+                    copy.content = nil
+                    cacheClearedCount += 1
+                }
+                return copy
+            }
+             // Optional: Log if a node wasn't found, though it shouldn't happen if collected correctly
+             // if updatedNode == nil { print("Warning: Could not find node \(fileNode.id) to clear cache.") }
+        }
+        print("Cleared cache for \\(cacheClearedCount) files.") // Add logging
+
+        // Re-assemble the prompt. assemblePrompt() will now call loadFileContent()
+        // for selected files because their cache is empty.
+        assemblePrompt()
+        print("Finished reloadContents.") // Add logging
+    }
+    // --- END NEW Refresh Methods ---
+
+    // --- NEW: Folder Watcher Management ---
+    private func startWatching(_ folder: URL) {
+        // Stop existing watcher if any
+        watcher?.stop()
+        watcher = nil
+        
+        // Create and start a new watcher
+        watcher = FolderWatcher(url: folder) { [weak self] in
+             print("FolderWatcher event received.") // Add logging
+             self?.treeDidChange.send() // Signal that something changed
+        }
+        if watcher == nil {
+             print("Error: Failed to initialize FolderWatcher for \(folder.path)")
+        }
+    }
+    // --- END NEW ---
 }
 
 // MARK: - Selection Count Helpers (Moved into Extension)
@@ -488,5 +600,38 @@ extension FileAggregator {
         finalPrompt       = ""
         rootFolderURL     = nil
         showRemoveIcons   = true
+    }
+}
+
+// --- NEW: Restore Selection and Expansion State ---
+extension FileAggregator {
+    private func restoreSelectionAndExpansion(selectedIDs: Set<String>, expandedIDs: Set<String>) {
+        self.selectedNodes = [] // Clear before restoring
+        self.expandedNodes = expandedIDs // Directly restore expanded IDs
+
+        func restoreRecursively(_ node: inout FileNode?) {
+            guard var n = node else { return }
+
+            if selectedIDs.contains(n.id) {
+                n.isSelected = true
+                self.selectedNodes.insert(n) // Add to the set
+            } else {
+                n.isSelected = false // Ensure others are not selected
+            }
+
+            n.isExpanded = expandedIDs.contains(n.id) // Restore expansion
+
+            if var children = n.children {
+                for i in children.indices {
+                    var child: FileNode? = children[i]
+                    restoreRecursively(&child)
+                    children[i] = child! // Assign back the potentially modified child
+                }
+                n.children = children
+            }
+            node = n // Assign back the potentially modified node
+        }
+
+        restoreRecursively(&rootNode)
     }
 }
