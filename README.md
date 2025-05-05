@@ -3,9 +3,16 @@
 
 **Turn any codebase into a single, clean prompt – in seconds.**
 
----
+<p align="center">
+  <img src="docs/screenshots/screenshot.png" width="80%" alt="App display">
+</p>
+
+[📺 **Live 20-second demo on X**](https://x.com/edrick_dch/status/1919219856320160161)
+
 
 [![Twitter Follow](https://img.shields.io/twitter/follow/edrick_dch?style=social)](https://twitter.com/edrick_dch)
+
+---
 
 Promptor is a tiny macOS app that lets you _drag-in_ a folder and _drag-out_ a perfectly-formatted prompt ready for ChatGPT (or any LLM).  
 
@@ -24,14 +31,6 @@ No server-side processing, no API keys, no rate limits – just a local SwiftUI 
 * **Template system** – swap between `Default`, `ChatML`, or roll your own with `{{files}}` placeholder.  
 * **Security-scoped bookmarks** – full sandbox compliance; Promptor never uploads or phones home.  
 * **Zero dependencies** – pure Swift + SwiftUI, 100 % local.
-
----
-
-## 📸 Screenshots
-
-| Import options          | File tree               | Final prompt            |
-| :---------------------- | :---------------------- | :---------------------- |
-| _add GIF or screenshot_ | _add GIF or screenshot_ | _add GIF or screenshot_ |
 
 ---
 
