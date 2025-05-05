@@ -157,6 +157,10 @@ class FileAggregator: ObservableObject {
     
     // Recursively create a file tree
     private func createFileTree(at url: URL, relativeTo rootURL: URL, fileManager fm: FileManager) -> FileNode? {
+        // ✱ NEW ✱ — consult user settings before doing any expensive work
+        if url != rootURL && !settings.shouldImport(url) {
+            return nil           // excluded by suffix, folder name or size
+        }
         do {
             // Get required attributes
             let resourceKeys: [URLResourceKey] = [.isDirectoryKey, .nameKey, .fileSizeKey]
