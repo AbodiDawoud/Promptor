@@ -6,7 +6,6 @@ struct ContentView: View {
     @State private var showingFileImporter = false
     @State private var pickedFolderURL: URL?
     @State private var showImportOptions = false
-    @State private var showTemplatePicker = false
     @State private var copied = false
     
     var body: some View {
@@ -60,9 +59,7 @@ struct ContentView: View {
             }
             .navigationTitle("Prompt")
         }
-        .toolbar {
-            PromptToolbar(showTemplatePicker: $showTemplatePicker)
-        }
+        .toolbar { PromptToolbar() }
         .fileImporter(isPresented: $showingFileImporter,
                       allowedContentTypes: [.folder, .item],
                       allowsMultipleSelection: true) { res in
@@ -82,10 +79,6 @@ struct ContentView: View {
                     showImportOptions = false
                 }
             }
-        }
-        .sheet(isPresented: $showTemplatePicker) {
-            TemplatePickerSheet(isPresented: $showTemplatePicker)
-                .environmentObject(vm)
         }
         .frame(minWidth: 800, minHeight: 600)
         .onAppear {

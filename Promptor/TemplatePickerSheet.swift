@@ -2,7 +2,8 @@ import SwiftUI
 
 struct TemplatePickerSheet: View {
     @EnvironmentObject var vm: FileAggregator
-    @Binding var isPresented: Bool
+    @Environment(\.dismiss) private var dismiss
+    
     /// The templates the user can choose from
     private let templates: [Template] = [
         .init(name: "Default", format: "{{files}}"),
@@ -25,17 +26,18 @@ struct TemplatePickerSheet: View {
                     Button(tpl.name) {
                         vm.currentTemplate = tpl
                         vm.assemblePrompt()
-                        isPresented = false
+                        dismiss()
                     }
                 }
             }
             .navigationTitle("Select Template")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Close") { isPresented = false }
+                    Button("Close", action: dismiss.callAsFunction)
                 }
             }
         }
         .frame(width: 300, height: 300)
+        .presentationCompactAdaptation(.popover)
     }
 } 

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PromptToolbar: ToolbarContent {
     @EnvironmentObject var vm: FileAggregator
-    @Binding var showTemplatePicker: Bool
+    @State private var showTemplatePicker: Bool = false
 
     var body: some ToolbarContent {
         ToolbarItemGroup {
@@ -10,7 +10,8 @@ struct PromptToolbar: ToolbarContent {
                 showTemplatePicker = true
             }
             .help("Select Template")
-
+            .popover(isPresented: $showTemplatePicker, content: TemplatePickerSheet.init)
+            
             if vm.hasFiles {
                 Button("Expand / Collapse All", systemImage: "plus.square.on.square", action: vm.toggleTreeExpansion)
                     .help("Expand or Collapse All Folders")
