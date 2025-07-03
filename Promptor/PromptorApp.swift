@@ -9,8 +9,6 @@ import SwiftUI
 
 @main
 struct PromptorApp: App {
-    @StateObject private var vm = FileAggregator()
-    
     init() {
         // Disable automatic Metal usage if possible
         if let _ = UserDefaults.standard.object(forKey: "NSUseMetalRenderer") {
@@ -23,7 +21,7 @@ struct PromptorApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(vm)
+                .environmentObject(FileAggregator())
         }
     }
 }
