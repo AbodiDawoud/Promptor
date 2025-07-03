@@ -45,7 +45,6 @@ class FileAggregator: ObservableObject {
     @Published var finalPrompt: String = ""
     @Published var rootFolderURL: URL?
     @Published var settings = AppSettings()
-    @Published var showRemoveIcons: Bool = true
     @Published var currentTemplate: Template = Template(name: "Default", format: "{{files}}")
     
     // --- NEW: Folder Watcher Properties ---
@@ -345,6 +344,7 @@ class FileAggregator: ObservableObject {
     // MARK: - Recompute parent folder selection states
     private func recomputeFolderSelections() {
         // propagate upward selection logic
+        @discardableResult
         func dfs(_ node: inout FileNode?) -> Bool {
             guard var n = node else { return false }
             if let children = n.children {
@@ -422,7 +422,7 @@ class FileAggregator: ObservableObject {
         if needsScope {
             accessGranted = url.startAccessingSecurityScopedResource()
             if accessGranted {
-                 defer { url.stopAccessingSecurityScopedResource() }
+                 url.stopAccessingSecurityScopedResource()
             } else {
                 // Try resolving bookmark as fallback if direct access fails
                 print("Could not start security scope directly, trying bookmark for \(url.path)")
@@ -436,7 +436,7 @@ class FileAggregator: ObservableObject {
                         if !isStale && resolvedURL.startAccessingSecurityScopedResource() {
                             print("Access granted via bookmark resolution.")
                             accessGranted = true
-                            defer { resolvedURL.stopAccessingSecurityScopedResource() } // Important: stop access on the *resolved* URL
+                            resolvedURL.stopAccessingSecurityScopedResource() // Important: stop access on the *resolved* URL
                         } else {
                              print("Bookmark resolved but access still denied or stale.")
                              accessGranted = false
@@ -553,7 +553,7 @@ class FileAggregator: ObservableObject {
         // Iterate through the files and clear their cached content
         for fileNode in filesToRefresh {
             // Use findAndUpdateNode to clear the content cache in the main tree structure
-             let updatedNode = findAndUpdateNode(fileNode.id, in: &rootNode) { node in
+             let _ = findAndUpdateNode(fileNode.id, in: &rootNode) { node in
                 var copy = node
                 if copy.content != nil { // Only clear if it was actually cached
                     copy.content = nil
@@ -646,7 +646,6 @@ extension FileAggregator {
         expandedNodes.removeAll()
         finalPrompt       = ""
         rootFolderURL     = nil
-        showRemoveIcons   = true
     }
 }
 

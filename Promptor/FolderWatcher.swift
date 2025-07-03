@@ -47,7 +47,7 @@ final class FolderWatcher {
              return nil
          }
 
-        FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        FSEventStreamSetDispatchQueue(stream, .main)
         guard FSEventStreamStart(stream) else {
             print("Error: Failed to start FSEventStream.")
             FSEventStreamInvalidate(stream) // Clean up if start fails

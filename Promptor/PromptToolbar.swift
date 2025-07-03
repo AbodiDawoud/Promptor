@@ -6,40 +6,29 @@ struct PromptToolbar: ToolbarContent {
 
     var body: some ToolbarContent {
         ToolbarItemGroup {
-            Button {
+            Button("Template", systemImage: "book.and.wrench") {
                 showTemplatePicker = true
-            } label: {
-                Label("Select Template", systemImage: "bookmark.ribbon")
             }
             .help("Select Template")
 
-            Button {
-                vm.toggleTreeExpansion()
-            } label: {
-                Label("Expand / Collapse All", systemImage: "plus.square.on.square")
+            if vm.hasFiles {
+                Button("Expand / Collapse All", systemImage: "plus.square.on.square", action: vm.toggleTreeExpansion)
+                    .help("Expand or Collapse All Folders")
+                
+                Button("Refresh Files", systemImage: "arrow.clockwise", action: vm.reloadContents)
+                    .help("Force refresh file content")
+                
+                Button("Remove All", systemImage: "trash", action: vm.removeAll)
+                    .tint(.red)
+                    .help("Remove all files from list")
             }
-            .help("Expand or Collapse All Folders")
-
-            Button { vm.reloadContents() } label: {
-                Label("Refresh Files", systemImage: "arrow.clockwise")
-            }
-            .help("Force refresh file content")
-
-            Button { vm.clearSelections() } label: {
-                Label("Unselect All", systemImage: "xmark.rectangle")
-            }
-            .help("Unselect all files")
-
-            Toggle(isOn: $vm.showRemoveIcons) {
-                Label("Show Remove Button", systemImage: "eye.slash")
-            }
-            .toggleStyle(.button)
-            .help("Hide / Show remove file button column")
-
-            Button(role: .destructive) { vm.removeAll() } label: {
-                Label("Remove All", systemImage: "trash")
-            }
-            .help("Remove all files from list")
         }
     }
 } 
+
+
+extension FileAggregator {
+    var hasFiles: Bool {
+        rootNode != nil
+    }
+}
